@@ -298,18 +298,21 @@ deploy_container() {
 }
 
 deploy_simple () {
+    local retval=0
     local MY_CONTAINER_NAME="${CONTAINER_NAME}_${BUILD_NUMBER}"
     deploy_container ${MY_CONTAINER_NAME}
     local RESULT=$?
     if [ $RESULT -ne 0 ]; then
         log_and_echo "$ERROR" "Error encountered with simple build strategy for ${CONTAINER_NAME}_${BUILD_NUMBER}"
         ${EXT_DIR}/utilities/sendMessage.sh -l bad -m "Failed deployment"
-        exit $RESULT
+        retval=$RESULT
     fi
+    return "$retval" 
 }
 
 deploy_red_black () {
     log_and_echo "$LABEL" "Example red_black container deploy "
+    local retval=0
     # deploy new version of the application
     local MY_CONTAINER_NAME="${CONTAINER_NAME}_${BUILD_NUMBER}"
     local FLOATING_IP=""
@@ -318,63 +321,69 @@ deploy_red_black () {
     local RESULT=$?
     if [ $RESULT -ne 0 ]; then
         ${EXT_DIR}/utilities/sendMessage.sh -l bad -m "Failed deployment of ${MY_CONTAINER_NAME}"
-        exit $RESULT
-    fi
-
-    # Cleaning up previous deployments. "
-    clean
-    RESULT=$?
-    if [ $RESULT -ne 0 ]; then
-        ${EXT_DIR}/utilities/sendMessage.sh -l bad -m "Failed to cleanup previous deployments after deployment of ${MY_CONTAINER_NAME}"
-        exit $RESULT
-    fi
-    # if we alredy discoved the floating IP in clean(), then we assign it to FLOATING_IP.
-    if [ -n "${DISCOVERED_FLOATING_IP}" ]; then
-        FLOATING_IP=$DISCOVERED_FLOATING_IP
-    fi
-
-    # check to see that I obtained a floating IP address
-    #ice inspect ${CONTAINER_NAME}_${BUILD_NUMBER} > inspect.log
-    #FLOATING_IP=$(cat inspect.log | grep "PublicIpAddress" | awk '{print $2}')
-    if [ "${FLOATING_IP}" = '""' ] || [ -z "${FLOATING_IP}" ]; then
-        log_and_echo "Requesting IP"
-        FLOATING_IP=$(ice ip request 2> /dev/null | awk '{print $4}' | grep -E '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}')
+        retval=$RESULT
+    else
+        # Cleaning up previous deployments. "
+        clean
         RESULT=$?
         if [ $RESULT -ne 0 ]; then
-            log_and_echo "$WARN" "Failed to request new IP address, will attempt to reuse existing IP"
-            FLOATING_IP=$(ice ip list 2> /dev/null | grep -E '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}[[:space:]]*$' | head -n 1)
-            #FLOATING_IP=$(ice ip list 2> /dev/null | grep -E '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | head -n 1)
-            #strip off whitespace
-            FLOATING_IP=${FLOATING_IP// /}
-            if [ -z "${FLOATING_IP}" ];then
-                log_and_echo "$ERROR" "Could not request a new, or reuse an existing IP address "
-                dump_info
-                ${EXT_DIR}/utilities/sendMessage.sh -l bad -m "Failed deployment of ${MY_CONTAINER_NAME}.  Unable to allocate IP address."
-                exit 1
-            else
-                log_and_echo "Assigning existing IP address $FLOATING_IP"
-            fi
+            ${EXT_DIR}/utilities/sendMessage.sh -l bad -m "Failed to cleanup previous deployments after deployment of ${MY_CONTAINER_NAME}"
+            retval=$RESULT
         else
-            # strip off junk
-            temp="${FLOATING_IP%\"}"
-            FLOATING_IP="${temp#\"}"
-            log_and_echo "Assigning new IP address $FLOATING_IP"
+            # if we alredy discoved the floating IP in clean(), then we assign it to FLOATING_IP.
+            if [ -n "${DISCOVERED_FLOATING_IP}" ]; then
+                FLOATING_IP=$DISCOVERED_FLOATING_IP
+            fi
+
+            # check to see that I obtained a floating IP address
+            #ice inspect ${CONTAINER_NAME}_${BUILD_NUMBER} > inspect.log
+            #FLOATING_IP=$(cat inspect.log | grep "PublicIpAddress" | awk '{print $2}')
+            if [ "${FLOATING_IP}" = '""' ] || [ -z "${FLOATING_IP}" ]; then
+                log_and_echo "Requesting IP"
+                FLOATING_IP=$(ice ip request 2> /dev/null | awk '{print $4}' | grep -E '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}')
+                RESULT=$?
+                if [ $RESULT -ne 0 ]; then
+                    log_and_echo "$WARN" "Failed to request new IP address, will attempt to reuse existing IP"
+                    FLOATING_IP=$(ice ip list 2> /dev/null | grep -E '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}[[:space:]]*$' | head -n 1)
+                    #FLOATING_IP=$(ice ip list 2> /dev/null | grep -E '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | head -n 1)
+                    #strip off whitespace
+                    FLOATING_IP=${FLOATING_IP// /}
+                    if [ -z "${FLOATING_IP}" ];then
+                        log_and_echo "$ERROR" "Could not request a new, or reuse an existing IP address "
+                        dump_info
+                        ${EXT_DIR}/utilities/sendMessage.sh -l bad -m "Failed deployment of ${MY_CONTAINER_NAME}.  Unable to allocate IP address."
+                        retval=1
+                    else
+                        log_and_echo "Assigning existing IP address $FLOATING_IP"
+                    fi
+                else
+                    # strip off junk
+                    temp="${FLOATING_IP%\"}"
+                    FLOATING_IP="${temp#\"}"
+                    log_and_echo "Assigning new IP address $FLOATING_IP"
+                fi
+                if [ $retval -eq 0 ]; then
+                    ice ip bind ${FLOATING_IP} ${CONTAINER_NAME}_${BUILD_NUMBER} 2> /dev/null
+                    RESULT=$?
+                    if [ $RESULT -ne 0 ]; then
+                        log_and_echo "$ERROR" "Failed to bind ${FLOATING_IP} to ${CONTAINER_NAME}_${BUILD_NUMBER} "
+                        log_and_echo "Unsetting TEST_URL"
+                        export TEST_URL=""
+                        dump_info
+                        ${EXT_DIR}/utilities/sendMessage.sh -l bad -m "Failed binding of IP address to ${MY_CONTAINER_NAME}"
+                        retval=1
+                    fi
+                 fi
+            fi
         fi
-        ice ip bind ${FLOATING_IP} ${CONTAINER_NAME}_${BUILD_NUMBER} 2> /dev/null
-        RESULT=$?
-        if [ $RESULT -ne 0 ]; then
-            log_and_echo "$ERROR" "Failed to bind ${FLOATING_IP} to ${CONTAINER_NAME}_${BUILD_NUMBER} "
-            log_and_echo "Unsetting TEST_URL"
-            export TEST_URL=""
-            dump_info
-            ${EXT_DIR}/utilities/sendMessage.sh -l bad -m "Failed binding of IP address to ${MY_CONTAINER_NAME}"
-            exit 1
+        if [ $retval -eq 0 ]; then
+            log_and_echo "Exporting TEST_URL:${TEST_URL}"
+            export TEST_URL="${URL_PROTOCOL}${FLOATING_IP}:$(echo $PORT | sed 's/,/ /g' |  awk '{print $1;}')"
+
+            log_and_echo "${green}Public IP address of ${CONTAINER_NAME}_${BUILD_NUMBER} is ${FLOATING_IP} and the TEST_URL is ${TEST_URL} ${no_color}"
         fi
     fi
-    log_and_echo "Exporting TEST_URL:${TEST_URL}"
-    export TEST_URL="${URL_PROTOCOL}${FLOATING_IP}:$(echo $PORT | sed 's/,/ /g' |  awk '{print $1;}')"
-
-    log_and_echo "${green}Public IP address of ${CONTAINER_NAME}_${BUILD_NUMBER} is ${FLOATING_IP} and the TEST_URL is ${TEST_URL} ${no_color}"
+    return "$retval"
 }
 
 clean() {
@@ -482,6 +491,7 @@ clean() {
 # Check to see what deployment type:
 #   simple: simply deploy a container and set the inventory
 #   red_black: deploy new container, assign floating IP address, keep original container
+retval=0
 if [ -z "$URL_PROTOCOL" ]; then
  export URL_PROTOCOL="http://"
 fi
@@ -499,7 +509,7 @@ if [ -z "$CONTAINER_SIZE" ];then
 else
     RET_MEMORY=$(get_memory_size $CONTAINER_SIZE)
     if [ $RET_MEMORY == -1 ]; then
-        exit 1;
+        retval=1
     else
         export MEMORY="--memory $RET_MEMORY"
     fi
@@ -515,6 +525,7 @@ ${EXT_DIR}/utilities/sendMessage.sh -l info -m "New ${DEPLOY_TYPE} container dep
 
 if [ "${DEPLOY_TYPE}" == "red_black" ]; then
     deploy_red_black
+    retval=$?
 elif [ "${DEPLOY_TYPE}" == "clean" ]; then
     clean
 else
@@ -522,7 +533,9 @@ else
     log_and_echo "$WARN" "If you would like another strategy please fork https://github.com/Osthanes/deployscripts.git and submit a pull request"
     log_and_echo "$WARN" "Defaulting to red_black deploy"
     deploy_red_black
+    retval=$?
 fi
 dump_info
 ${EXT_DIR}/utilities/sendMessage.sh -l good -m "Sucessful deployment of ${CONTAINER_NAME}"
-exit 0
+log_and_echo "deploycontainer retval = ${retval}"
+export deploy_retval=$retval
