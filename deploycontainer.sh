@@ -16,7 +16,7 @@
 #********************************************************************************
 
 # load helper functions
-source $(dirname "$0")/deploy_utilities.sh
+source deployscripts/deploy_utilities.sh
 
 print_run_fail_msg () {
     log_and_echo ""
