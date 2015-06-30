@@ -16,7 +16,7 @@
 #********************************************************************************
 
 # load helper functions
-source $(dirname "$0")/deploy_utilities.sh
+source deployscripts/deploy_utilities.sh
 
 print_create_fail_msg () {
     log_and_echo ""
@@ -326,7 +326,7 @@ deploy_group() {
     if [ ${FOUND} -eq 0 ]; then
         log_and_echo "$ERROR" "${MY_GROUP_NAME} already exists. Please delete it or run group deployment again."
         ${EXT_DIR}/utilities/sendMessage.sh -l bad -m "Deployment of ${MY_GROUP_NAME} failed as the group already exists"
-        exit 1
+        return 1
     fi
 
     local BIND_PARMS=""
@@ -407,8 +407,9 @@ deploy_simple () {
     if [ $RESULT -ne 0 ]; then
         log_and_echo "$ERROR" "Error encountered with simple build strategy for ${CONTAINER_NAME}_${BUILD_NUMBER}"
         ${EXT_DIR}/utilities/sendMessage.sh -l bad -m "Failed deployment"
-        exit $RESULT
+        return $RESULT
     fi
+    return 0
 }
 
 deploy_red_black () {
@@ -419,7 +420,7 @@ deploy_red_black () {
     local RESULT=$?
     if [ $RESULT -ne 0 ]; then
         ${EXT_DIR}/utilities/sendMessage.sh -l bad -m "Deployment of ${MY_GROUP_NAME} failed"
-        exit $RESULT
+        return $RESULT
     fi
 
     if [ -z "$REMOVE_FROM" ]; then
@@ -427,7 +428,7 @@ deploy_red_black () {
         RESULT=$?
         if [ $RESULT -ne 0 ]; then
             ${EXT_DIR}/utilities/sendMessage.sh -l bad -m "Failed to cleanup previous groups after deployment of group ${MY_GROUP_NAME}"
-            exit $RESULT
+            return $RESULT
         fi
     else
         log_and_echo "Not removing previous instances until after testing"
@@ -514,6 +515,7 @@ clean() {
 # Check to see what deployment type:
 #   simple: simply deploy a container and set the inventory
 #   red_black: deploy new container, assign floating IP address, keep original container
+retval=0
 log_and_echo "$LABEL" "Deploying using ${DEPLOY_TYPE} strategy, for ${CONTAINER_NAME}, deploy number ${BUILD_NUMBER}"
 ${EXT_DIR}/utilities/sendMessage.sh -l info -m "New ${DEPLOY_TYPE} copntainer group deployment for ${CONTAINER_NAME} requested"
 
@@ -617,7 +619,7 @@ if [ -z "$CONTAINER_SIZE" ];then
 else
     RET_MEMORY=$(get_memory_size $CONTAINER_SIZE)
     if [ $RET_MEMORY == -1 ]; then
-        exit 1;
+        retval=1
     else
         export MEMORY="--memory $RET_MEMORY"
     fi
@@ -625,19 +627,25 @@ fi
 
 if [ "${DEPLOY_TYPE}" == "simple" ]; then
     deploy_simple
+    retval=$?
 elif [ "${DEPLOY_TYPE}" == "simple_public" ]; then
     deploy_public
+    retval=$?
 elif [ "${DEPLOY_TYPE}" == "clean" ]; then
     clean
+    retval=$?
 elif [ "${DEPLOY_TYPE}" == "red_black" ]; then
     deploy_red_black
+    retval=$?
 else
     log_and_echo "$WARN" "Currently only supporting 'red_black' deployment and 'clean' strategy"
     log_and_echo "$WARN" "If you would like another strategy please fork https://github.com/Osthanes/deployscripts.git and submit a pull request"
     log_and_echo "$WARN" "Defaulting to red_black deploy"
     deploy_red_black
+    retval=$?
 fi
 
 dump_info
 ${EXT_DIR}/utilities/sendMessage.sh -l good -m "Successful ${DEPLOY_TYPE} container group deployment of ${CONTAINER_NAME}"
-exit 0
+log_and_echo "deploygroup retval = ${retval}"
+export deploy_retval=$retval
