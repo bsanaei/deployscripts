@@ -528,6 +528,7 @@ if [ "${DEPLOY_TYPE}" == "red_black" ]; then
     retval=$?
 elif [ "${DEPLOY_TYPE}" == "clean" ]; then
     clean
+    retval=$?
 else
     log_and_echo "$WARN" "Currently only supporting red_black deployment strategy"
     log_and_echo "$WARN" "If you would like another strategy please fork https://github.com/Osthanes/deployscripts.git and submit a pull request"
