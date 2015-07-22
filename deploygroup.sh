@@ -251,8 +251,14 @@ deploy_red_black () {
     deploy_group ${MY_GROUP_NAME}
     local RESULT=$?
     if [ $RESULT -ne 0 ]; then
+        set -x
+        while read -r line
+            do
+                echo $line
+            done < "$ERROR_LOG_FILE" 
         echo "Bahram3 test: $(get_error_info)"
         ${EXT_DIR}/utilities/sendMessage.sh -l bad -m "Failed deployment of ${MY_GROUP_NAME}. $(get_error_info)"
+        set +x
         exit $RESULT
     fi
 
